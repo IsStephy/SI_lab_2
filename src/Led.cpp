@@ -8,6 +8,7 @@ Led::Led(int pin) {
 // Sets the pin as OUTPUT and turns the LED OFF by default
 void Led::Init() {
     pinMode(_pin, OUTPUT);
+    digitalWrite(_pin, LOW);
 }
 // Turns the LED ON
 void Led::On() {

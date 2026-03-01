@@ -1,132 +1,202 @@
 #include <Arduino.h>
+#include <Arduino_FreeRTOS.h>
+#include <task.h>
+#include <semphr.h>
 #include <stdio.h>
 #include "Led.h"
 #include "Button.h"
 #include "map.h"
 
-// Pin definitions for all hardware peripherals
-#define BUTTON_PIN 7
-#define GREEN_LED_PIN 13
-#define RED_LED_PIN 12
-#define YELLOW_LED_PIN 11
+/* =======================
+   HARDWARE OBJECTS
+   ======================= */
 
-// Hardware peripheral objects
-Led green(GREEN_LED_PIN);
-Led red(RED_LED_PIN);
-Led yellow(YELLOW_LED_PIN);
-Button btn(BUTTON_PIN);
+Button button(7);
+Led greenLed(13);
+Led redLed(12);
+Led yellowLed(11);
 
-// Press counters
-unsigned long totalPresses = 0;
-unsigned long shortPressCount = 0;
-unsigned long longPressCount = 0;
+/* =======================
+   GLOBAL SHARED VARIABLES
+   ======================= */
 
-// Accumulated durations for average calculation
-unsigned long shortDurationSum = 0;
-unsigned long longDurationSum = 0;
+volatile uint16_t totalPresses = 0;
+volatile uint16_t shortPresses = 0;
+volatile uint16_t longPresses = 0;
+volatile uint16_t totalShortDuration = 0;
+volatile uint16_t totalLongDuration = 0;
+volatile uint16_t lastPressDuration = 0;
 
-// Tracks the last time a report was printed
-unsigned long lastReportTime = 0;
-// Report is printed every 10 seconds
-const unsigned long REPORT_INTERVAL = 10000;
+/* =======================
+   SYNCHRONIZATION OBJECTS
+   ======================= */
 
-// Initializes all peripherals and the map layer
-void setup() {
+SemaphoreHandle_t xButtonSemaphore;
+SemaphoreHandle_t xStatsMutex;
 
-    Serial.begin(9600);   // IMPORTANT for Wokwi Serial Monitor
+/* =======================
+   TASK 1 – BUTTON
+   ======================= */
 
-    green.Init();
-    red.Init();
-    yellow.Init();
-    btn.Init();
+void Task_Button(void *pvParameters)
+{
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+    const TickType_t xPeriod = pdMS_TO_TICKS(10);
+    
 
-    MAP_Init(&green, &red, &yellow, &btn);
+    bool lastState = false;
+    uint16_t pressStart = 0;
 
-    Serial.println("System Started");
-}
+    for(;;)
+    {
+        bool currentState = button.IsPressed();
 
-// Blinks the yellow LED a given number of times with 50ms on/off intervals
-void YellowBlink(int times) {
+        if(currentState && !lastState)
+        {
+            pressStart = millis();
+            vTaskDelay(pdMS_TO_TICKS(20));
+        }
 
-    for (int i = 0; i < times; i++) {
-        printf("YELLOW_ON\n");
-        delay(50);
-        printf("YELLOW_OFF\n");
-        delay(50);
+        if(!currentState && lastState)
+        {
+            vTaskDelay(pdMS_TO_TICKS(20));
+
+            uint16_t duration = millis() - pressStart;
+
+            xSemaphoreTake(xStatsMutex, portMAX_DELAY);
+            lastPressDuration = duration;
+            xSemaphoreGive(xStatsMutex);
+
+            if(duration < 500)
+            {
+                printf("g_on\n");
+                printf("r_off\n");
+            }
+            else
+            {
+                printf("g_off\n");
+                printf("r_on\n");
+            }
+
+            xSemaphoreGive(xButtonSemaphore);  // Give semaphore AFTER button release
+        }
+
+        lastState = currentState;
+        vTaskDelayUntil(&xLastWakeTime, xPeriod);
     }
 }
 
-void loop() {
+/* =======================
+   TASK 2 – STATISTICS
+   ======================= */
 
-    unsigned long currentTime = millis();
+void Task_Statistics(void *pvParameters)
+{
+    
+    
+    for(;;)
+    {
+        // Wait for button press signal
+        xSemaphoreTake(xButtonSemaphore, portMAX_DELAY);
 
-    // ---------- TIMER ----------
-    // Print a statistics report every REPORT_INTERVAL milliseconds
-    if (currentTime - lastReportTime >= REPORT_INTERVAL) {
+        xSemaphoreTake(xStatsMutex, portMAX_DELAY);
 
-        printf("\n----- 10s REPORT -----\n");
-        printf("Total presses: %lu\n", totalPresses);
-        printf("Short presses: %lu\n", shortPressCount);
-        printf("Long presses: %lu\n", longPressCount);
+        totalPresses++;
 
-        // Calculate and print average press duration if any presses occurred
-        if (totalPresses > 0) {
-            unsigned long totalDuration =
-                shortDurationSum + longDurationSum;
-
-            unsigned long average =
-                totalDuration / totalPresses;
-
-            printf("Average duration: %lu ms\n", average);
+        if(lastPressDuration < 500)
+        {
+            shortPresses++;
+            totalShortDuration += lastPressDuration;
         }
-        else {
-            printf("Average duration: 0 ms\n");
+        else
+        {
+            longPresses++;
+            totalLongDuration += lastPressDuration;
         }
 
-        printf("----------------------\n");
+        uint8_t blinks;
+        if (totalLongDuration % 5 == 0){
+            blinks = 5;
+        }else{
+            blinks = 10;
+        }
 
-        // Reset all counters and sums for the next interval
+        xSemaphoreGive(xStatsMutex);
+
+        for(uint8_t i = 0; i < blinks; i++)
+        {
+            printf("y_on\n");
+            vTaskDelay(pdMS_TO_TICKS(50));
+            printf("y_off\n");
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
+
+        printf("g_off\n");
+        printf("r_off\n");
+    }
+}
+
+/* =======================
+   TASK 3 – REPORT
+   ======================= */
+
+void Task_Report(void *pvParameters)
+{
+    
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+    const TickType_t xPeriod = pdMS_TO_TICKS(10000);
+
+    for(;;)
+    {
+        vTaskDelayUntil(&xLastWakeTime, xPeriod);
+
+        xSemaphoreTake(xStatsMutex, portMAX_DELAY);
+
+        uint16_t avg = 0;
+        if(totalPresses > 0)
+            avg = (totalShortDuration + totalLongDuration) / totalPresses;
+
+        printf("T:%u S:%u L:%u A:%u\n",
+               totalPresses,
+               shortPresses,
+               longPresses,
+               avg);
+
         totalPresses = 0;
-        shortPressCount = 0;
-        longPressCount = 0;
-        shortDurationSum = 0;
-        longDurationSum = 0;
+        shortPresses = 0;
+        longPresses = 0;
+        totalShortDuration = 0;
+        totalLongDuration = 0;
 
-        lastReportTime = currentTime;
-    }
-
-    // ---------- INPUT ----------
-    char buffer[20];
-
-    // Read button press duration from the map layer
-    int result = Scanf(buffer, sizeof(buffer));
-
-    if (result > 0) {
-
-        unsigned long duration = atol(buffer);
-
-        // Short press: duration between 1ms and 499ms
-        // Flash green LED and blink yellow 5 times
-        if (duration < 500 && duration > 0) {
-            totalPresses++;
-            printf("GREEN_ON\n");
-            delay(300);
-            printf("GREEN_OFF\n");
-            YellowBlink(5);
-            shortPressCount++;
-            shortDurationSum += duration;
-        }
-        // Long press: duration 500ms or more
-        // Flash red LED and blink yellow 10 times
-        else if (duration >= 500) {
-            totalPresses++;
-            printf("RED_ON\n");
-            delay(300);
-            printf("RED_OFF\n");
-            YellowBlink(10);
-            longPressCount++;
-            longDurationSum += duration;
-        }
+        xSemaphoreGive(xStatsMutex);
     }
 }
 
+/* =======================
+   SETUP
+   ======================= */
+
+void setup()
+{
+    Serial.begin(9600);
+
+
+    button.Init();
+    greenLed.Init();
+    redLed.Init();
+    yellowLed.Init();
+
+    MAP_Init(&greenLed, &redLed, &yellowLed, &button);
+
+    xButtonSemaphore = xSemaphoreCreateBinary();
+    
+    xStatsMutex = xSemaphoreCreateMutex();
+
+    xTaskCreate(Task_Button, "B", 80, NULL, 1, NULL);
+    xTaskCreate(Task_Statistics, "S", 80, NULL, 1, NULL);
+    xTaskCreate(Task_Report, "R", 120, NULL, 3, NULL);  // Highest priority
+
+    vTaskStartScheduler();
+}
+
+void loop() {}

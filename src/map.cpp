@@ -17,32 +17,31 @@ FILE map_stdout;
 // Buffers characters until a newline, then checks if the accumulated
 // string is a known LED command and executes it, otherwise prints to Serial
 int map_putchar(char c, FILE* f) {
-    static char command[128];
-    static int idx = 0;
+    static char command[32];   // reduced buffer (UNO friendly)
+    static uint8_t idx = 0;
 
     if (c == '\n') {
         command[idx] = '\0';
 
-        if (strcmp(command, "GREEN_ON") == 0)
+        if (strcmp(command, "g_on") == 0)
             greenLed->On();
 
-        else if (strcmp(command, "GREEN_OFF") == 0)
+        else if (strcmp(command, "g_off") == 0)
             greenLed->Off();
 
-        else if (strcmp(command, "RED_ON") == 0)
+        else if (strcmp(command, "r_on") == 0)
             redLed->On();
 
-        else if (strcmp(command, "RED_OFF") == 0)
+        else if (strcmp(command, "r_off") == 0)
             redLed->Off();
 
-        else if (strcmp(command, "YELLOW_ON") == 0)
+        else if (strcmp(command, "y_on") == 0)
             yellowLed->On();
 
-        else if (strcmp(command, "YELLOW_OFF") == 0)
+        else if (strcmp(command, "y_off") == 0)
             yellowLed->Off();
 
         else {
-            // Print regular text to Serial if not a command
             if (idx > 0) {
                 Serial.println(command);
             }
@@ -51,7 +50,7 @@ int map_putchar(char c, FILE* f) {
         idx = 0;
     }
     else {
-        if (idx < 127)
+        if (idx < sizeof(command) - 1)
             command[idx++] = c;
     }
 

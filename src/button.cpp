@@ -2,7 +2,7 @@
 #include <Arduino.h>
 
 // GPIO pin number this button is connected to
-int _pin;
+
 
 // Constructs a Button and stores the associated GPIO pin number
 Button::Button(int pin) {
