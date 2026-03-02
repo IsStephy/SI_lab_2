@@ -11,7 +11,7 @@
    HARDWARE OBJECTS
    ======================= */
 
-Button button(7);
+Button button(4);
 Led greenLed(13);
 Led redLed(12);
 Led yellowLed(11);
@@ -192,10 +192,9 @@ void setup()
     
     xStatsMutex = xSemaphoreCreateMutex();
 
-    xTaskCreate(Task_Button, "B", 80, NULL, 1, NULL);
-    xTaskCreate(Task_Statistics, "S", 80, NULL, 1, NULL);
-    xTaskCreate(Task_Report, "R", 120, NULL, 3, NULL);  // Highest priority
-
+    xTaskCreate(Task_Button, "B", 200, NULL, 1, NULL);
+    xTaskCreate(Task_Statistics, "S", 200, NULL, 1, NULL);
+    xTaskCreate(Task_Report, "R", 400, NULL, 3, NULL);
     vTaskStartScheduler();
 }
 
